@@ -17,14 +17,15 @@ logger = logging.getLogger("sd_notif.main")
 
 
 async def tg_polling_loop(bot: BotHandler, elma_client: httpx.AsyncClient):
-    """Dedicated fast Telegram polling loop using proxy if configured."""
-    logger.info(f"Starting dedicated Telegram polling loop (Proxy: {settings.TELEGRAM_PROXY})...")
+    """Dedicated fast Telegram polling loop using proxy/SSL if configured."""
+    logger.info(f"Starting Telegram polling loop (Proxy: {settings.TELEGRAM_PROXY}, Timeout: {settings.TELEGRAM_POLL_TIMEOUT}s)...")
     proxy_url = settings.TELEGRAM_PROXY if settings.TELEGRAM_PROXY else None
-    async with httpx.AsyncClient(proxy=proxy_url, verify=False, timeout=15.0) as tg_client:
+    client_timeout = httpx.Timeout(settings.TELEGRAM_POLL_TIMEOUT + 15.0, connect=10.0)
+    async with httpx.AsyncClient(proxy=proxy_url, verify=settings.VERIFY_SSL, timeout=client_timeout) as tg_client:
         while True:
             try:
                 await bot.poll_updates(elma_client, tg_client)
-                await asyncio.sleep(0.3)
+                await asyncio.sleep(0.1)
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -36,7 +37,8 @@ async def watchdog_loop(watchdog: WatchdogService, elma_client: httpx.AsyncClien
     """Background periodic watchdog check loop."""
     logger.info("Starting Watchdog background loop...")
     tg_proxy = settings.TELEGRAM_PROXY if settings.TELEGRAM_PROXY else None
-    async with httpx.AsyncClient(proxy=tg_proxy, verify=False, timeout=15.0) as tg_client:
+    client_timeout = httpx.Timeout(30.0, connect=10.0)
+    async with httpx.AsyncClient(proxy=tg_proxy, verify=settings.VERIFY_SSL, timeout=client_timeout) as tg_client:
         while True:
             try:
                 await watchdog.check_discrepancies(elma_client, tg_client)
@@ -56,12 +58,20 @@ async def main():
     logger.info(f"Shift Times: {settings.SHIFT_TIMES} (UTC+{settings.TIMEZONE_OFFSET_HOURS})")
     logger.info(f"Supervisors: IDs={settings.SUPERVISOR_USER_IDS}, Names={settings.SUPERVISOR_USERNAMES}")
     logger.info(f"Telegram Proxy: {settings.TELEGRAM_PROXY}")
+    logger.info(f"Verify SSL: {settings.VERIFY_SSL}")
+
+    if not settings.TELEGRAM_BOT_TOKEN or not settings.ELMA_API_TOKEN:
+        logger.warning(
+            "⚠️ ATTENTION: TELEGRAM_BOT_TOKEN or ELMA_API_TOKEN is empty. "
+            "Please configure your .env file based on .env.example."
+        )
 
     elma = ElmaClient()
     bot = BotHandler(elma)
     watchdog = WatchdogService(elma, bot)
 
-    async with httpx.AsyncClient(verify=False, timeout=25.0) as elma_client:
+    elma_timeout = httpx.Timeout(35.0, connect=10.0)
+    async with httpx.AsyncClient(verify=settings.VERIFY_SSL, timeout=elma_timeout) as elma_client:
         await asyncio.gather(
             tg_polling_loop(bot, elma_client),
             watchdog_loop(watchdog, elma_client)

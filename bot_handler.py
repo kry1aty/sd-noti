@@ -327,7 +327,10 @@ class BotHandler:
         """Poll for Telegram updates."""
         try:
             url = f"{self.base_url}/getUpdates"
-            resp = await tg_client.get(url, params={"offset": self.offset, "timeout": 5})
+            resp = await tg_client.get(
+                url,
+                params={"offset": self.offset, "timeout": settings.TELEGRAM_POLL_TIMEOUT}
+            )
             if resp.status_code == 200:
                 updates = resp.json().get("result", [])
                 for u in updates:
@@ -336,5 +339,8 @@ class BotHandler:
                         await self.handle_message(elma_client, tg_client, u["message"])
                     elif "callback_query" in u:
                         await self.handle_callback_query(elma_client, tg_client, u["callback_query"])
+            elif resp.status_code in (401, 404):
+                logger.error(f"Telegram Bot API authentication error: HTTP {resp.status_code} - check TELEGRAM_BOT_TOKEN")
         except Exception as e:
             logger.debug(f"TG poll cycle error: {e}")
+
